@@ -1,0 +1,11 @@
+users = {
+  "janoszen": "ssh-rsa AAAA..."
+}
+exoscale_key = "EXO..."
+exoscale_secret = "..."
+exoscale_zone = "at-vie-1"
+eip_ip = "..."
+privnet_id = "..."
+privnet_cidr = "10.0.0.1/8"
+privnet_ip = "10.0.0.1"
+name = "router"
