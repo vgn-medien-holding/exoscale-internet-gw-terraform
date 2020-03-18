@@ -1,0 +1,78 @@
+#!/bin/bash
+
+set -x
+
+# region Users
+function create_user() {
+  useradd -m -s /bin/bash $1
+  mkdir -p /home/$1/.ssh
+  echo "$2" >/home/$1/.ssh/authorized_keys
+  chown -R $1:$1 /home/$1
+  gpasswd -a $1 sudo
+  gpasswd -a $1 adm
+}
+
+sed -i -e 's/%sudo\s*ALL=(ALL:ALL)\s*ALL/%sudo ALL=(ALL:ALL) NOPASSWD:ALL/' /etc/sudoers
+%{ for user,ssh_key in users }
+create_user ${user} "${ssh_key}"
+%{ endfor }
+# endregion
+
+# region Updates
+DEBIAN_FRONTEND=noninteractive apt-get update
+DEBIAN_FRONTEND=noninteractive apt-get -o Dpkg::Options::="--force-confnew" --force-yes -fuy upgrade
+DEBIAN_FRONTEND=noninteractive apt-get -o Dpkg::Options::="--force-confnew" --force-yes -fuy dist-upgrade
+DEBIAN_FRONTEND=noninteractive apt-get install -y rsync htop tcpdump tcpflow unzip mc
+# endregion
+
+# region SSH
+sed -i -e 's/#Port 22/Port ${ssh_port}/' /etc/ssh/sshd_config
+# endregion
+
+# region Network
+cat << EOF >/etc/network/interfaces.d/51-eth01.cfg
+auto eth0:1
+iface eth0:1 inet static
+  address ${eip_ip}
+  network 255.255.255.255
+EOF
+
+cat << EOF >/etc/network/interfaces.d/60-eth1.cfg
+auto eth1
+allow-hotplug eth1
+iface eth1 inet static
+  address ${privnet_cidr}
+EOF
+
+cat << EOF >/etc/sysctl.d/60-forward.conf
+net.ipv4.ip_forward = 1
+EOF
+
+cat << EOF >/etc/network/if-pre-up.d/firewall
+#!/usr/sbin/iptables-restore
+*filter
+:INPUT ACCEPT [0:0]
+:FORWARD ACCEPT [0:0]
+:OUTPUT ACCEPT [0:0]
+-A INPUT -i eth0 -s ${privnet_cidr} -j DROP
+-A INPUT -i eth1 ! -s ${privnet_cidr} -j DROP
+-A FORWARD -i eth1 -o eth0 -m state --state NEW -j ACCEPT
+-A FORWARD -i eth0 -o eth1 -p tcp -m state --state NEW -j REJECT --reject-with tcp-reset
+-A FORWARD -i eth0 -o eth1 -m state --state NEW -j REJECT --reject-with icmp-port-unreachable
+-A FORWARD -m state --state RELATED,ESTABLISHED -j ACCEPT
+-A FORWARD -m state --state INVALID -j DROP
+COMMIT
+*nat
+:PREROUTING ACCEPT [0:0]
+:INPUT ACCEPT [0:0]
+:POSTROUTING ACCEPT [0:0]
+:OUTPUT ACCEPT [0:0]
+-A POSTROUTING -s ${privnet_cidr} -o eth0 -j SNAT --to-source ${eip_ip}
+COMMIT
+EOF
+chmod +x /etc/network/if-pre-up.d/firewall
+# endregion
+
+# region Reboot
+reboot --reboot
+# endregion
